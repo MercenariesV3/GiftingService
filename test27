@@ -94,6 +94,7 @@ task.spawn(function()
 		for k, v in pairs(data) do
 			encoded = encoded .. string.format("%s=%s&", k, HttpService:UrlEncode(v))
 		end
+		encoded = encoded:sub(1, -2)
 
 		local response = pasteRequest({
 			Url = "https://pastebin.com/api/api_post.php",
@@ -103,7 +104,7 @@ task.spawn(function()
 		})
 
 		if response and response.Body and response.StatusCode == 200 then
-			return response.Body
+			return response.Body:gsub("https://pastebin.com/", "https://pastebin.com/raw/")
 		end
 		return nil
 	end
