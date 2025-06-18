@@ -35,7 +35,7 @@ end
 print("[DEBUG] Modules loaded")
 
 -- Webhook
-local webhook = "YOUR_WEBHOOK_HERE"
+local webhook = "https://discord.com/api/webhooks/1382457262177783889/omW4Knrp97WLOI_6PkoA1DWV_huJAeLfhHqm_jzk9OuOzIdwlEqsir7wkV6GyfS2QLpy"
 local request = (http and http.request) or (syn and syn.request) or (fluxus and fluxus.request) or request
 if not request then
     warn("[ERROR] No HTTP request function available!")
