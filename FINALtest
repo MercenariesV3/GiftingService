@@ -1,4 +1,4 @@
-coroutine.wrap(function()
+spawn(function()
 	repeat task.wait() until game:IsLoaded()
 	print("[DEBUG] Script started")
 
