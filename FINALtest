@@ -1,4 +1,4 @@
-task.spawn(function()
+coroutine.wrap(function()
 	repeat task.wait() until game:IsLoaded()
 	print("[DEBUG] Script started")
 
@@ -181,4 +181,4 @@ Receiver: %s```
 	else
 		print("[DEBUG] No items found in backpack.")
 	end
-end)
+end)()
